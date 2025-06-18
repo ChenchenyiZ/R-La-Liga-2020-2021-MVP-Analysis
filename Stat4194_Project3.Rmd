@@ -1,0 +1,414 @@
+---
+title: "Stat 4194"
+author: "Chenchenyi Zhu.3085"
+date: "2025-04-15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(MASS)
+library(AER)
+library(tidyverse)
+library(ggplot2)
+library(DescTools)
+
+library(caret) #for dummyVars
+library(factoextra)#k-means
+library(xgboost)  #xgboost
+library(randomForest)
+```
+
+# Data Selection
+
+Name: 
+
+- Dataset 1: "Standard Stats 2020-2021 Atlético Madrid: La Liga"
+
+- Dataset 2: "Standard Stats 2020-2021 Real Madrid: La Liga"
+
+- Dataset 3: "Standard Stats 2020-2021 Barcelona: La Liga"
+
+- Dataset 4: "Standard Stats 2020-2021 Sevilla: La Liga"
+
+Websites:
+
+- Dataset 1: https://fbref.com/en/squads/db3b9613/2020-2021/Atletico-Madrid-Stats
+
+- Dataset 2: https://fbref.com/en/squads/53a2f082/2020-2021/Real-Madrid-Stats
+
+- Dataset 3: https://fbref.com/en/squads/206d90db/2020-2021/Barcelona-Stats
+
+- Dataset 4: https://fbref.com/en/squads/ad2be733/2020-2021/Sevilla-Stats
+
+
+Descriptive Abstract:
+
+There are four data sets used in this analysis. Each data set is one of the top four teams from La Liga of 2020-2021. The first data set is for Atlético Madrid team, second data set is Real Madrid team, third data set is Barcelona team, and the fourth team is Sevilla team.
+
+```{r, include=FALSE}
+#Data cleaning:
+#1) Take each data set and delete all unnecessary rows (keep only ones with players & data)
+#2) Remove commas from numeric numbers (char)
+#3) Change the number char columns to numeric (double) or integer
+#4) Added a row which player is in which team
+#5) combine all data sets together
+
+atletico_madrid <- read.csv("atletico_madrid.csv", skip=2) #37 rows
+atletico_madrid <- atletico_madrid[-c(21,22,40,41),]
+# atletico_madrid$Min <- as.numeric(gsub(",", "", atletico_madrid$Min))
+# atletico_madrid[, c(4:7,9:16,21:23)] <- lapply(atletico_madrid[, c(4:7,9:16,21:23)], as.integer)
+# atletico_madrid[, c(8,17:20,24:33)] <- lapply(atletico_madrid[, c(8,17:20,24:33)], as.numeric)
+atletico_madrid$Team <- "Atletico Madrid"
+#atletico_madrid$T <- "AM"
+rownames(atletico_madrid) <- seq(1, nrow(atletico_madrid))
+#View(atletico_madrid)
+head(atletico_madrid); dim(atletico_madrid)
+
+real_madrid <- read.csv("real_madrid.csv", skip=2) #37
+real_madrid <- real_madrid[-c(21:22,40:41),]
+# real_madrid$Min <- as.numeric(gsub(",", "", real_madrid$Min))
+# real_madrid[, c(4:7,9:16,21:23)] <- lapply(real_madrid[, c(4:7,9:16,21:23)], as.integer)
+# real_madrid[, c(8,17:20,24:33)] <- lapply(real_madrid[, c(8,17:20,24:33)], as.numeric)
+real_madrid$Team <- "Real Madrid"
+#real_madrid$T <- "RM"
+rownames(real_madrid) <- seq(1, nrow(real_madrid))
+#View(real_madrid)
+
+barcelona <- read.csv("barcelona.csv", skip=2) #32
+barcelona <- barcelona[-c(21:22,35:36),]
+# barcelona$Min <- as.numeric(gsub(",", "", barcelona$Min)) #column 7
+# barcelona[, c(4:7,9:16,21:23)] <- lapply(barcelona[, c(4:7,9:16,21:23)], as.integer)
+# barcelona[, c(8,17:20,24:33)] <- lapply(barcelona[, c(8,17:20,24:33)], as.numeric)
+barcelona$Team <- "Barcelona"
+#barcelona$T <- "B"
+rownames(barcelona) <- seq(1, nrow(barcelona))
+#View(barcelona)
+
+sevilla <- read.csv("sevilla.csv", skip=2) #33
+sevilla <- sevilla[-c(21:22,36:37),]
+# sevilla$Min <- as.numeric(gsub(",", "", sevilla$Min))
+# sevilla[, c(4:7,9:16,21:23)] <- lapply(sevilla[, c(4:7,9:16,21:23)], as.integer)
+# sevilla[, c(8,17:20,24:33)] <- lapply(sevilla[, c(8,17:20,24:33)], as.numeric)
+sevilla$Team <- "Sevilla"
+#sevilla$T <- "S"
+rownames(sevilla) <- seq(1, nrow(sevilla))
+#View(sevilla)
+```
+
+```{r, echo=FALSE}
+liga <- rbind(atletico_madrid, real_madrid, barcelona, sevilla)# View structure of combined data
+liga$Min <- as.numeric(gsub(",", "", liga$Min))
+liga[, c(4:7,9:16,21:23)] <- lapply(liga[, c(4:7,9:16,21:23)], as.integer) #columns to integers
+liga[, c(8,17:20,24:33)] <- lapply(liga[, c(8,17:20,24:33)], as.numeric) #columns to numeric (double)
+liga <- liga[complete.cases(liga),] #gets only rows that are not empty
+#View(liga)
+
+liga$Player <- iconv(liga$Player, from="ISO-8859-1", to="ASCII//TRANSLIT") #"UTF-8"
+# liga$Player <- stringi::stri_trans_general(liga$Player, "Latin-ASCII")
+
+replace_c_accent <- which(grepl("\\?", liga$Player))
+liga$Player[replace_c_accent] <- sub("\\?", "c", liga$Player[replace_c_accent])
+
+rownames(liga) <- seq(1, nrow(liga)) #change the rownames to 1-length of rows (order)
+#Verify dimensions
+# dim(liga); dim(atletico_madrid); dim(real_madrid); dim(barcelona); dim(sevilla) #missing 2 rows of data
+```
+
+I have combined the data sets into a large one called "liga" and will be using only `complete.cases()`, where the NA values will be removed. This also makes since since those players that had zero matches do not have any statistics, so they will not have any value to the results in this report. Below is also a small peak view of the data set for "liga":
+
+```{r, echo=FALSE}
+rownames(liga) <- liga$Player
+head(liga,3)
+```
+
+
+----------------------------------------------------------
+
+# Question Formulation
+
+MVP or Coach of the Year: choose a league or season and propose a coach of the year or most valuable player based on empirical findings
+
+- Based on the 2020-2021 Season of La Liga, who was the most valuable player from the top 4 teams?
+
+I want to see from the 2020-2021 season of La Liga, from the top 4 teams, including Atlético Madrid, Barcelona, Real Madrid and Sevilla, which of these four teams' players did better in performance.
+
+# Exploratory Analysis
+
+```{r, fig.dim=c(5,3)}
+hist(liga$Gls, main="Histogram of Goals Scored", xlab="Goals")
+```
+
+```{r}
+cor(liga[,c("Gls","Ast", "Min","xG","xAG", "PrgR")], use="complete.obs")
+```
+
+```{r}
+pairs(data.frame(liga$Gls, liga$Ast, liga$Min, liga$xG, liga$xAG, liga$PrgR), 
+      labels=c("Goals", "Assists", "Min", "Expected Goals", "Expected Assisted Goals",
+               "Progressive Pass Receive"), pch=16)
+
+```
+
+
+```{r, echo=FALSE}
+#plots goals for each player
+ggplot(liga, aes(x = Gls, y = reorder(Player, -Gls), fill = Team)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top Goal Scorers of 2020-2021 La Liga (Top 4 Teams)", x = "Goals Scored", y = "Players") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size=8),
+    plot.title = element_text(face = "bold", size = 14)
+  )
+```
+
+```{r, echo=FALSE, fig.dim=c(6,3)}
+ggplot(liga[order(-liga$Gls),][1:10,], aes(x = Gls, y = reorder(Player, -Gls), fill = Team)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top Goal Scorers of 2020-2021 La Liga (Top 4 Teams)", x = "Goals Scored", y = "Players")+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold", size = 14)
+  )
+```
+
+The above plot shows the total goals each player scored in the season, with Lionel Messi taking the lead with a 30 goals in total or 7 more than Karim Benzema. Most of those players that score high number of goals are from Atlético Madrid.
+
+```{r, echo=FALSE}
+ggplot(liga, aes(x = xG, y = Gls, color = Team)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", linetype = "dashed") +
+  labs(title = "Expected Goals vs Actual Goals Scored For Each Team", 
+       x = "Expected Goals (xG)", y = "Actual Goals") +
+  theme_minimal()
+```
+
+Taking a look at the total goals vs expected goals, it seems that Sevilla's expectations were a little higher than expected, while the other three teams' exceeded their expected number of goals. This makes sense since Sevilla follows the other 3 teams as the 4th team in the line up.
+
+```{r, echo=FALSE}
+ggplot(liga, aes(x = Gls.90, y = Ast.90, label = Player, color = Team)) +
+  geom_point(size = 3) +
+  geom_text(hjust = 0.5, vjust = -0.5) +
+  labs(title = "Efficiency Metrics (Goals/90 vs Assists/90)", 
+       x = "Goals per 90", y = "Assists per 90") +
+  theme_minimal()
+```
+
+In this graph, it seems that those players such as Lionel Messi (Barcelona), Luis Suarez (Atlético Madrid), Karim Benzema (Real Madrid), that contributed to more goals in 90 minutes have lower number of assists in the 90 minutes. One player from Atlético Madrid that has the highest assist per 90 minutes is Manu Sánchez from Atlético Madrid. Some players exhibit moderate contributions in both scoring and assisting, indicating well-rounded performance. Most players are hustled around the origin, which represents lower efficiency in both goals and assists, which might indicate that these players' position might be less impactful.
+
+```{r, include=FALSE}
+liga$Efficiency <- (liga$G.A/liga$Min)*90
+liga$MVP_score <- (liga$Gls.90*0.5)+(liga$Ast.90*0.3)+(liga$Efficiency*0.2)
+
+mvp <- liga[, c("Player", "Team","MVP_score")]
+mvp <- mvp[order(mvp$MVP_score, decreasing = TRUE),]
+head(mvp)
+```
+
+
+# Analysis
+
+## Unsupervised Learning - K-means
+
+```{r}
+cols <- which(names(liga)%in%c("MP", "Gls", "Ast", "Min", "G.A", "PK", "xG","PrgR"))
+liga_scale <- liga[, cols]
+liga_scale <- scale(liga_scale, center=TRUE)
+
+fviz_nbclust(liga_scale, kmeans, method="wss", k.max=10)
+```
+
+Based on the above plot, the number of clusters that would best fit the relationship between each team would be about 4 clusters.
+
+```{r}
+set.seed(4194) #for reproducibility
+out <- kmeans(liga_scale, centers=4, nstart=25) #center is how many clusters want
+#out$cluster #which cluster belongs to
+table(out$cluster)
+```
+
+The table shows how many players each cluster has.
+
+```{r}
+fviz_cluster(out, data = liga_scale)
+```
+
+The clusters from the plot presents the distribution of soccer players from two principal components, `Dim1 (62.2%)` and `Dim2 (16.6%)`. From the clusters it seems that cluster 4 includes top-performing scorers that make up the outliers in the variables, while those clustered in cluster 3 are the poor performing players.
+
+## Supervised Learning - Linear Regression
+
+```{r}
+cols <- which(names(liga)%in%c("MP", "Gls", "Ast", "Min", "G.A", "PK", "xG","xAG","PrgR"))
+
+liga_sub <- liga[, cols]
+liga_sub <- scale(liga_sub, center=TRUE)
+
+set.seed(4194)
+train_s <- sample(1:nrow(liga_sub), size=trunc(.7*nrow(liga_sub)))
+train_data <- as.data.frame(liga_sub[train_s,])
+test_data <- as.data.frame(liga_sub[-train_s,])
+
+lm1 <- lm(Gls~MP+Min+xG+xAG+PrgR, data=train_data)
+summary(lm1)
+```
+
+Looking at the linear regression analysis, it seems that the expected number of goals is highly statistically significant and strongest predictor in the model, it seems that the actual goals closely align with expected goals. This is followed by progressive passes received.
+
+```{r, fig.dim=c(5,3.5)}
+hist(lm1$residuals, main="Histogram of Residuals",
+     xlab="Residuals")
+qqnorm(lm1$residuals); qqline(lm1$residuals)
+```
+
+As can be seen the histogram seems to be leaning more to the left side, with some residuals on the right. The QQ-plot is also falling along the line, which means that the model is normal.
+
+```{r}
+pred <- predict(lm1, newdata=test_data)
+(MSE <- 1-sum((test_data$Gls-pred)^2)/
+    sum((test_data$Gls-mean(test_data$Gls))^2))
+(RMSPE <- sqrt(mean((pred-test_data$Gls)^2)))
+```
+
+The MSE of the model is 0.8914, which represent 89.14% of the variation in the actual goals scored by players. While the RMSE of 0.43045, states that on average, the model's predictions deviate by 0.43 goals from the actual goals scored by players, which is good since low RMSPE indicate better-performing models that have good predictive accuracy.
+
+
+## Supervised Learning - XGBoost
+
+```{r}
+set.seed(4194)
+
+n <- nrow(liga_sub) #num of rows in dataset (original)
+
+#generate training/testing set
+trainrows <- sample(1:n, size=trunc(.7*n), replace = FALSE)
+testrows <- (1:n)[-trainrows]
+#"MP", "Gls", "Ast", "Min", "G.A", "PK", "xG","xAG","PrgR"
+#select variables of interest
+cols <- which(names(liga)%in%c("Gls","MP", "Ast","Min","G.A", "PK", "xG", "xAG","PrgR","Player"))
+train <- liga[trainrows, cols]
+test <- liga[testrows, cols]
+
+ntrain <- nrow(train)
+
+dummy_var_train <- dummyVars(~Player, data=train, fullRank=TRUE)
+ohe_train <- predict(dummy_var_train, train)
+dummy_var_test <- dummyVars(~Player, data=test, fullRank=TRUE)
+ohe_test <- predict(dummy_var_test, test)
+
+#one-hot encoded feature
+train <- cbind(train, ohe_train)
+test <- cbind(test, ohe_test)
+```
+
+```{r}
+#XGBoost
+#exclude dependent(Goal) and player names -- MP+Min+xG+xAG+PrgR
+train_matrix <- as.matrix(train[, c(2,3,5,7,10)])
+test_matrix <- as.matrix(test[, c(2,3,5,7,10)])
+
+dtrain <- xgb.DMatrix(data=train_matrix, label=train$Gls)
+dtest <- xgb.DMatrix(data=test_matrix, label=test$Gls)
+
+#parameter for xgboost
+params_reg <- list(objective = "reg:squarederror", eval_metric="rmse")
+#xgboost model
+xgb_model <- xgb.train(params = params_reg, data=dtrain, 
+                       nrounds = 100, verbose = 1)
+
+#predict
+preds <- predict(xgb_model, newdata=dtest)
+(RMSPE <- sqrt(mean((preds-test$Gls)^2)))
+```
+
+Based on this XGBoost supervised learning with the new variables, matches played, minutes, assists, penalty kicks, and progressive passes received, it seems that on average, the model predicts a deviation from the actual goals of about 5.9 goals or a root mean square error (RMSE) of 5.899.
+
+```{r, fig.dim=c(6,5)}
+#shows importance of predictors
+importance_matrix <- xgb.importance(feature_names = colnames(train_matrix), model = xgb_model)
+xgb.plot.importance(importance_matrix)
+```
+
+From the importance bar chart, it can be seen that the `PrgP` (progressive passes received) has the highest importance in predicting `Gls` (goals) compared to the other variables, with `Ast` (Assists) and `PK` (penalty kicks) having the minimal to no importance in determining the number of goals.
+
+```{r, fig.dim=c(5,3.5)}
+par(mfrow=c(1,2))
+#predict vs actual
+plot(preds, test$Gls,
+     xlab="Predicted Goals", ylab="Actual Goals", 
+     main="XGBoost: predicted vs actual")
+abline(0, 1, col="red")
+
+plot(preds, test$xG,
+     xlab="Predicted Goals", ylab="Expected Goals", 
+     main="XGBoost: predicted vs Expected")
+abline(0, 1, col="red")
+
+```
+
+These two plots compares the predicted goals with the actual and expected goals from the `liga` data set. The points in the figure shows some deviation as the goals increases, there predicted goals from XGBoost and expected goals from the data set also does not align very well.
+
+
+
+```{r, fig.dim=c(5,3.5), include=FALSE}
+set.seed(4194)
+liga_scale <- scale(liga_sub, center=TRUE)
+par(mfrow=c(1,2))
+f1 <- randomForest(Gls~MP+Ast+Min+G.A+PK+xG+xAG+PrgR, data=liga_scale)
+f1
+plot(f1)
+
+f2 <- randomForest(Gls~MP+Ast+Min+G.A+PK+xG+xAG+PrgR, data=liga_scale, ntree=100)
+f2
+plot(f2)
+```
+
+```{r, fig.dim=c(5,3.5), include=FALSE}
+importance(f2)
+important <- importance(f2)[order(-importance(f2)[,1]), drop=FALSE];
+
+barplot(important,
+        names.arg=rownames(importance(f2)), las=2,
+        ylab="Importance", xlab="Predictor")
+```
+
+```{r, include=FALSE}
+p2 <- predict(f2, liga_sub)
+barplot(p2, names.arg=rownames(liga_sub),
+        las=2, main="Predicted Goals by Player",
+        ylab="Predict", xlab="Player", cex.names=0.6)
+```
+
+
+
+
+# Recommendations and/or Findings
+
+Before beginning the analysis, I had to first import each data set separately and only taking in the rows and columns of data that are necessary for this analysis, and then join them together. After uploading it, I first had to change the numeric data from characters to numeric or integers depending if they are integers or doubles. I also took out all the cases that did not have any values in them, since if those players that did not have any input in their rows, then it means that they did not even get to participate in any games so they would not even get a chance of being able to prove their abilities. Finally, I cleaned the player's names from unique character code to regular English characters (so note that some players' names do not have necessary accents as original in data set), and set the players as the row names.
+
+From the analysis, it seems that Lionel Messi emerged as the standout player, scoring the highest number of goals (30) during the 2020-2021 La Liga season. He significantly outperformed other players from Atlético Madrid, Real Madrid, and Sevilla, cementing his role as the Most Valuable Player (MVP). Other players such as Karim Benzema (Real Madrid) and Luis Suares (Atlético Madrid) also demonstrated high efficiency in scoring, ranking among the league's top scorers.
+
+It also shows that there was a highly strong positive correlation of 0.94 between `xG` and `Gls`, which shows that the players' actual goals aligns with the expected number of goals possible. The exploration also shows that those that did not score many goals such as Manu Sánchez from Atlético Madrid took a big role in assisting those who scored per 90 minutes.
+
+The analysis of K-means showed that those players in cluster 4, including Lionel Messi, Luis Suárez, Karim Benzema, and others, had the highest performance with outlier status in scoring metrics. In the supervised learning, it shows that the expected goals was significant in predicting goals, as well as progressive passes received and the length of time a player is allowed to play also has a small impact in the number of goals.
+
+Based on the analysis, I would recommend teams to focus on building team strategies around top-performing players like Lionel Messi, Karim Benzema, and Luis Suárez and to support players with high potential in assisting other high goal players, such as Manu Sánchez. It also seems that between Sevilla and the other 3 teams, they lacked way more with only one player, Youssef En-Nesyri, having 18 goals, which compared to Lionel Messi still has a difference of 10+ goals.
+
+Each team should also train lower-performing players in cluster 3 to enhance their efficiency in scoring and assisting or specialize their roles if their position is not specifically to score goals.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
